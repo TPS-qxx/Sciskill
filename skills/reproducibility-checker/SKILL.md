@@ -1,81 +1,185 @@
 ---
 name: reproducibility-checker
-description: Check a machine learning research GitHub repository for common reproducibility issues. Returns a score from 0-100 and a detailed checklist. Use when the user wants to assess or improve the reproducibility of their own code repository before paper submission, or when reviewing someone else's code. Can analyze a GitHub URL (auto-clones) or a local directory.
+description: Static-analysis reproducibility audit for a machine learning code repository. Returns two separate scores — runnability_score (can someone run the code at all?) and reproducibility_score (can someone reproduce the paper's numbers?) — plus a per-dimension checklist with transparent point weights and executable fix suggestions. Use when preparing code for paper submission, reviewing a public repo, or auditing your own project. Do NOT use for non-ML codebases (the rubric is ML-specific), for measuring result correctness (this is code-structure analysis only), or when no code repository is available.
 ---
 
 # Reproducibility Checker
 
-Performs static analysis on a code repository to detect common reproducibility problems. Inspired by the NeurIPS Reproducibility Checklist. Returns a 0-100 score and actionable suggestions.
+Rule-based static analysis of a code repository against the ML reproducibility rubric. **No LLM required — fully deterministic.** Returns two independently scored dimensions, a per-check breakdown showing exactly how each point was earned or lost, and copy-paste fix suggestions.
+
+---
+
+## Input Schema
+
+```json
+{
+  "repo_url":    "string — GitHub/GitLab HTTPS URL (mutually exclusive with local_path)",
+  "local_path":  "string — absolute path to local directory (mutually exclusive with repo_url)",
+  "keep_clone":  "boolean — default false: delete clone after analysis",
+  "checks":      ["string — subset of check IDs to run; default: run all"],
+  "strict_mode": "boolean — default false: treat warnings as errors in score calculation"
+}
+```
+
+**Exactly one of `repo_url` or `local_path` is required.**
+
+---
+
+## Output Schema
+
+```json
+{
+  "runnability_score":      0,
+  "reproducibility_score":  0,
+  "overall_score":          0,
+  "grade":                  "A | B | C | D | F",
+  "checks": [
+    {
+      "check_id":      "string",
+      "dimension":     "runnability | reproducibility",
+      "severity":      "error | warning | info",
+      "passed":        true,
+      "points_possible": 0,
+      "points_earned":   0,
+      "description":   "string — what was checked",
+      "finding":       "string | null — specific finding (e.g. offending file/line)",
+      "fix_suggestion":"string | null — copy-paste ready fix instruction",
+      "evidence":      ["string — file paths or code snippets that informed this check"]
+    }
+  ],
+  "dimension_breakdown": {
+    "runnability": {
+      "score":    0,
+      "max":      0,
+      "pct":      0.0,
+      "checks_passed": 0,
+      "checks_failed": 0
+    },
+    "reproducibility": {
+      "score":    0,
+      "max":      0,
+      "pct":      0.0,
+      "checks_passed": 0,
+      "checks_failed": 0
+    }
+  },
+  "warnings": ["string — e.g. 'Could not parse Python AST in train.py: SyntaxError'"]
+}
+```
+
+---
+
+## Scoring Rubric
+
+### Runnability dimension (max 50 pts)
+
+Measures whether a new user can install and run the code without contacting the authors.
+
+| Check ID | Description | Points | Severity |
+|----------|-------------|--------|----------|
+| `RUN-01` | Dependency specification exists (`requirements.txt`, `pyproject.toml`, `environment.yml`, `Pipfile`, `setup.py`) | 15 | error |
+| `RUN-02` | README contains installation instructions (keyword: `install`, `pip`, `conda`) | 10 | error |
+| `RUN-03` | README contains usage/training/evaluation instructions (keyword: `python`, `run`, `train`, `evaluate`) | 10 | error |
+| `RUN-04` | Entry-point script exists (`train.py`, `main.py`, `run.py`, `finetune.py`, or Makefile) | 8 | warning |
+| `RUN-05` | No hardcoded absolute paths in Python files (`/home/`, `/Users/`, `C:\`) | 7 | warning |
+
+### Reproducibility dimension (max 50 pts)
+
+Measures whether the paper's reported results can be independently re-obtained.
+
+| Check ID | Description | Points | Severity |
+|----------|-------------|--------|----------|
+| `REP-01` | Random seed is fixed in entry-point scripts (`torch.manual_seed`, `np.random.seed`, `random.seed`, `set_seed`, `pl.seed_everything`) | 12 | warning |
+| `REP-02` | Hyperparameter configuration file exists (`.yaml`, `.yml`, `.json` config under `configs/`, `config/`, or `hparams.*`) | 10 | warning |
+| `REP-03` | Data download or preparation script exists (`download_data.sh`, `prepare_data.py`, Makefile with wget/curl, DVC `.dvc` files) | 10 | warning |
+| `REP-04` | Pretrained checkpoint or model download link available (`.ckpt`, `.pth`, `.pt`, `.bin`, `model.safetensors`, or `wget`/`gdown`/`huggingface_hub` call in README) | 8 | info |
+| `REP-05` | Experiment logging integration present (`wandb`, `mlflow`, `tensorboard`, `neptune`, `comet`) | 5 | info |
+| `REP-06` | License file present (`LICENSE`, `LICENCE`, `LICENSE.txt`) | 3 | info |
+| `REP-07` | Container/environment spec exists (`Dockerfile`, `docker-compose.yml`, `.devcontainer/`, `nix` flake) | 2 | info |
+
+### Score → Grade mapping
+
+| Overall score | Grade | Meaning |
+|---------------|-------|---------|
+| 90–100 | A | Submission-ready |
+| 75–89 | B | Minor issues — fix before submission |
+| 55–74 | C | Several gaps — address errors and warnings |
+| 35–54 | D | Significant reproducibility concerns |
+| 0–34 | F | Not reproducible without author assistance |
+
+**`overall_score` = `runnability_score` + `reproducibility_score` (each out of 50).**
+
+---
 
 ## When to Use
 
-- Researcher is preparing to release code alongside a paper submission
-- Reviewer wants to quickly assess reproducibility of a public repo
-- User wants guidance on what reproducibility standards to meet
-- CI/CD integration for ongoing reproducibility tracking
+- Preparing code release alongside a paper submission (especially NeurIPS, ICML, ICLR which have reproducibility checklists)
+- Self-auditing a repository before making it public
+- Quick reproducibility assessment of someone else's public repo
+- CI/CD gate: block merges that drop reproducibility below a threshold
+
+## When NOT to Use
+
+- **Non-ML codebases**: the rubric is calibrated for ML experiments (seeds, checkpoints, training scripts); it will produce misleading scores for web apps, data pipelines, etc.
+- **Correctness verification**: this skill checks code structure, not whether the model actually produces the numbers in the paper — for that, you must run the code
+- **No code repository available**: if only a PDF exists with no code link, this skill cannot run
+- **Proprietary/private data-dependent repos**: `REP-03` will likely fail even if data preparation is well-documented; add a note when presenting results
+
+---
 
 ## Step-by-Step Instructions
 
-1. **Get the repository location** from the user:
-   - A GitHub URL: `https://github.com/owner/repo`
-   - A local directory path: `/path/to/my-project`
+1. **Get the repository location** from the user (GitHub URL or local path).
 
 2. **Run the checker**:
-
    ```bash
-   # Analyze a GitHub repo (auto-clones, then deletes the clone):
+   # GitHub repository (auto-clones, deletes after):
    python skills/reproducibility-checker/run.py --repo https://github.com/owner/repo
 
-   # Analyze a local directory:
+   # Local directory:
    python skills/reproducibility-checker/run.py --local /path/to/project
 
-   # Keep the clone after analysis:
+   # Keep clone for inspection:
    python skills/reproducibility-checker/run.py --repo https://github.com/owner/repo --keep
+
+   # Run only runnability checks (skip REP-*):
+   python skills/reproducibility-checker/run.py --local /path/to/project \
+     --checks RUN-01 RUN-02 RUN-03 RUN-04 RUN-05
    ```
 
-3. **Interpret the score**:
+3. **Present results** in this order:
+   a. **Scores**: `runnability_score/50` and `reproducibility_score/50`, overall grade
+   b. **Failed error-severity checks** first (these are blockers)
+   c. **Failed warning-severity checks** with `fix_suggestion` for each
+   d. **Passed checks** (brief acknowledgment)
+   e. **`warnings`** from the analysis process (parser failures, etc.)
 
-   | Score | Level | Meaning |
-   |-------|-------|---------|
-   | 85–100 | Excellent | Ready for paper submission |
-   | 70–84 | Good | Minor improvements recommended |
-   | 50–69 | Moderate | Several issues to address |
-   | 0–49 | Poor | Significant reproducibility concerns |
+4. **For each failed check**, show:
+   - Check ID and description
+   - `finding` (specific file/line if available)
+   - `fix_suggestion` verbatim (ready to act on)
 
-4. **Report findings** to the user:
-   - Show the score prominently
-   - List all **failed checks** grouped by severity (error → warning → info)
-   - For each failed check, give the specific suggestion and, if available, the offending file(s)
-   - Acknowledge passing checks briefly
+5. **Prioritize remediation order**:
+   - Fix `error` checks first (highest point value, most impactful)
+   - Then `warning` checks in order of `points_possible` descending
+   - `info` checks are optional improvements
 
-5. **Prioritize fixes** by severity:
-   - `error`: Fix before submission (missing requirements.txt, etc.)
-   - `warning`: Fix if possible (hardcoded paths, missing seed)
-   - `info`: Nice-to-have (Docker support, license file)
+6. **After user fixes issues**, offer to re-run to confirm improvement.
 
-## Checks Performed
+---
 
-### Error-severity (−15 pts each if failed)
-- **Dependency specification file exists** — requirements.txt, pyproject.toml, environment.yml, Pipfile, etc.
-- **README with setup instructions** — must mention installation and usage/training/evaluation
+## Implementation Notes
 
-### Warning-severity (−7 pts each if failed)
-- **Random seed is fixed** — detects `torch.manual_seed()`, `np.random.seed()`, `random.seed()`, `set_seed()`
-- **Training scripts set random seeds (AST check)** — scripts named `train.py`, `main.py`, etc. that import random libraries should also call seed functions
-- **No hardcoded absolute paths** — detects `/home/user/...`, `/Users/...`, `C:\...` in Python files
-- **Data download/preparation script exists** — `download_data.sh`, `Makefile` with wget/curl, etc.
+- GitHub clone uses `--depth 1` (shallow) for speed; requires `git` to be installed
+- AST-based seed check (`REP-01`) only parses files matching: `train*.py`, `main*.py`, `run*.py`, `finetune*.py`, `pretrain*.py`
+- Hardcoded path check (`RUN-05`) scans all `.py` files; excludes `.git/`, `__pycache__/`, `node_modules/`
+- Clone is auto-deleted unless `keep_clone=true`; if clone fails (private repo, no git), analysis aborts with an error
 
-### Info-severity (−3 pts each if failed)
-- **Model checkpoint or download link available** — `.ckpt`, `.pth`, `.bin` files or mention in README
-- **Experiment configuration files exist** — YAML/JSON config files for hyperparameters
-- **License file exists** — LICENSE or LICENCE file
-- **Docker / container support** — Dockerfile or docker-compose.yml
+## Known Limitations
 
-## Notes
+- AST parsing fails on Python files with syntax errors — these files are skipped and logged in `warnings`
+- Cannot detect whether seed-setting calls are actually reached during execution (only checks for their presence)
+- `REP-04` (checkpoint availability) may have false negatives for repos that use custom model hosting
+- Does not check that hyperparameter config values match the paper — only that a config file exists
 
-- For GitHub repos, requires `git` to be installed. Uses a shallow clone (`--depth 1`) for speed.
-- The clone is automatically deleted after analysis unless `--keep` is specified.
-- AST-based seed checking only analyzes Python files named `train*.py`, `main*.py`, `run*.py`, or `finetune*.py`.
-- Score is additive: 100 minus penalty points for each failed check. Minimum score is 0.
-
-For detailed explanations of each check, see `docs/checks-reference.md`.
+For detailed check implementation notes, see `docs/checks-reference.md`.

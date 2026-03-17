@@ -1,19 +1,13 @@
 """
 Skill 6: Reproducibility Checker
 
-Inputs:
-  - repo_url: GitHub repository URL
-  - local_path: local path to a cloned repo (alternative to repo_url)
-  - cleanup: bool (default True) — remove cloned repo after analysis
+Two-dimension scoring:
+  - runnability_score (0-50): can someone install and run the code?
+  - reproducibility_score (0-50): can someone re-obtain the paper's numbers?
+  - overall_score (0-100) = sum of both dimensions
 
-Output:
-  {
-    "repo": "owner/name",
-    "score": 72,
-    "checks": [...],
-    "suggestions": [...],
-    "summary": "..."
-  }
+Each check has a canonical check_id (RUN-01…RUN-05, REP-01…REP-07),
+transparent point weights, and a copy-paste fix suggestion.
 """
 from __future__ import annotations
 
@@ -28,7 +22,8 @@ from sciskills.core.registry import registry
 from sciskills.skills.reproducibility_checker.checks import (
     ALL_CHECKS,
     CheckResult,
-    compute_score,
+    compute_scores,
+    score_to_grade,
 )
 from sciskills.utils.llm_client import get_default_client
 
@@ -37,31 +32,37 @@ from sciskills.utils.llm_client import get_default_client
 class ReproducibilityChecker(BaseSkill):
     name = "reproducibility_checker"
     description = (
-        "Analyze a GitHub repository for common reproducibility issues. "
-        "Checks for: dependency files, random seed fixation, hardcoded paths, "
-        "data download scripts, README quality, and more. "
-        "Returns a reproducibility score (0-100) and actionable suggestions."
+        "Static-analysis reproducibility audit for ML repositories. "
+        "Returns runnability_score (0-50) and reproducibility_score (0-50) separately, "
+        "a per-check breakdown with transparent point weights and fix suggestions. "
+        "Checks: dependency files, README quality, seed fixation, config files, "
+        "data scripts, checkpoints, experiment logging, Docker support."
     )
     input_schema = {
         "type": "object",
         "properties": {
             "repo_url": {
                 "type": "string",
-                "description": "GitHub repository URL, e.g. 'https://github.com/owner/repo'.",
+                "description": "GitHub/GitLab HTTPS URL, e.g. 'https://github.com/owner/repo'.",
             },
             "local_path": {
                 "type": "string",
-                "description": "Path to a locally cloned repository.",
+                "description": "Absolute path to a locally cloned repository.",
             },
-            "cleanup": {
+            "keep_clone": {
                 "type": "boolean",
-                "default": True,
-                "description": "Remove the cloned repo after analysis (only applies when repo_url is used).",
+                "default": False,
+                "description": "Keep the cloned repo after analysis (only applies to repo_url).",
             },
-            "generate_summary": {
+            "checks": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Subset of check_ids to run (e.g. ['RUN-01','REP-01']). Default: all.",
+            },
+            "strict_mode": {
                 "type": "boolean",
-                "default": True,
-                "description": "Generate an LLM summary of the reproducibility report.",
+                "default": False,
+                "description": "Treat 'warning' checks as errors in score calculation.",
             },
         },
         "oneOf": [
@@ -72,22 +73,27 @@ class ReproducibilityChecker(BaseSkill):
     output_schema = {
         "type": "object",
         "properties": {
-            "repo": {"type": "string"},
-            "score": {"type": "integer"},
+            "runnability_score": {"type": "integer"},
+            "reproducibility_score": {"type": "integer"},
+            "overall_score": {"type": "integer"},
+            "grade": {"type": "string"},
             "checks": {"type": "array"},
-            "suggestions": {"type": "array"},
-            "summary": {"type": "string"},
+            "dimension_breakdown": {"type": "object"},
+            "warnings": {"type": "array"},
         },
     }
 
     def execute(self, params: dict) -> SkillResult:
         repo_label = ""
         tmp_dir: str | None = None
+        process_warnings: list[str] = []
 
         try:
             if "local_path" in params:
                 repo_path = Path(params["local_path"])
                 repo_label = repo_path.name
+                if not repo_path.is_dir():
+                    return SkillResult.fail(errors=[f"Directory not found: {repo_path}"])
             else:
                 repo_url = params["repo_url"].rstrip("/")
                 repo_label = self._parse_repo_label(repo_url)
@@ -95,50 +101,75 @@ class ReproducibilityChecker(BaseSkill):
                 repo_path = Path(tmp_dir) / "repo"
                 self._clone_repo(repo_url, repo_path)
 
+            # Filter checks if subset requested
+            filter_ids = set(params.get("checks") or [])
+            check_fns = [
+                fn for fn in ALL_CHECKS
+                if not filter_ids or fn.__name__.split("_")[1].upper() in filter_ids
+                   or any(fn.__name__.upper().startswith(f"CHECK_{cid.replace('-', '_')}") for cid in filter_ids)
+            ]
+            if filter_ids:
+                # Simple match: check if check_id appears in function name
+                check_fns = [
+                    fn for fn in ALL_CHECKS
+                    if any(cid.replace("-", "_").lower() in fn.__name__.lower() for cid in filter_ids)
+                ]
+            if not check_fns:
+                check_fns = ALL_CHECKS
+
             # Run all checks
             results: list[CheckResult] = []
-            for check_fn in ALL_CHECKS:
+            for check_fn in check_fns:
                 try:
                     results.append(check_fn(repo_path))
                 except Exception as e:
-                    results.append(CheckResult(
-                        item=check_fn.__name__,
-                        passed=False,
-                        severity="info",
-                        detail=f"Check failed with error: {e}",
-                    ))
+                    process_warnings.append(f"{check_fn.__name__} failed: {e}")
 
-            score = compute_score(results)
-            suggestions = [r.suggestion for r in results if not r.passed and r.suggestion]
+            scores = compute_scores(results)
+            grade = score_to_grade(scores["overall_score"])
 
             checks_dicts = [
                 {
-                    "item": r.item,
-                    "passed": r.passed,
+                    "check_id": r.check_id,
+                    "dimension": r.dimension,
                     "severity": r.severity,
-                    "files": r.files,
-                    "detail": r.detail,
-                    "suggestion": r.suggestion,
+                    "passed": r.passed,
+                    "points_possible": r.points_possible,
+                    "points_earned": r.points_earned,
+                    "description": r.item,
+                    "finding": r.finding,
+                    "fix_suggestion": r.suggestion,
+                    "evidence": r.evidence,
                 }
                 for r in results
             ]
 
-            summary = ""
-            if params.get("generate_summary", True):
-                summary = self._generate_summary(repo_label, score, results, suggestions)
+            def dim_stats(dim: str) -> dict:
+                dim_results = [r for r in results if r.dimension == dim]
+                earned = sum(r.points_earned for r in dim_results)
+                possible = sum(r.points_possible for r in dim_results)
+                passed_count = sum(1 for r in dim_results if r.passed)
+                return {
+                    "score": scores[f"{dim}_score"],
+                    "max": possible,
+                    "pct": round(earned / possible * 100, 1) if possible > 0 else 0.0,
+                    "checks_passed": passed_count,
+                    "checks_failed": len(dim_results) - passed_count,
+                }
 
             return SkillResult.ok(
                 data={
                     "repo": repo_label,
-                    "score": score,
+                    "runnability_score": scores["runnability_score"],
+                    "reproducibility_score": scores["reproducibility_score"],
+                    "overall_score": scores["overall_score"],
+                    "grade": grade,
                     "checks": checks_dicts,
-                    "suggestions": suggestions,
-                    "summary": summary,
-                    "stats": {
-                        "total_checks": len(results),
-                        "passed": sum(1 for r in results if r.passed),
-                        "failed": sum(1 for r in results if not r.passed),
+                    "dimension_breakdown": {
+                        "runnability": dim_stats("runnability"),
+                        "reproducibility": dim_stats("reproducibility"),
                     },
+                    "warnings": process_warnings,
                 }
             )
 
@@ -146,7 +177,7 @@ class ReproducibilityChecker(BaseSkill):
             return SkillResult.fail(errors=[str(e)])
 
         finally:
-            if tmp_dir and params.get("cleanup", True):
+            if tmp_dir and not params.get("keep_clone", False):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------ #
@@ -169,53 +200,5 @@ class ReproducibilityChecker(BaseSkill):
         if result.returncode != 0:
             raise RuntimeError(
                 f"git clone failed: {result.stderr.strip()}\n"
-                "Make sure the repository is public and git is installed."
-            )
-
-    def _generate_summary(
-        self,
-        repo: str,
-        score: int,
-        results: list[CheckResult],
-        suggestions: list[str],
-    ) -> str:
-        failed_items = [r.item for r in results if not r.passed]
-        passed_items = [r.item for r in results if r.passed]
-
-        prompt = f"""You are reviewing the reproducibility of a machine learning research repository.
-
-Repository: {repo}
-Reproducibility Score: {score}/100
-
-Passed checks ({len(passed_items)}): {', '.join(passed_items[:6])}
-Failed checks ({len(failed_items)}): {', '.join(failed_items[:6])}
-
-Top suggestions:
-{chr(10).join(f'- {s[:100]}' for s in suggestions[:5])}
-
-Write a concise 3-4 sentence summary that:
-1. States the overall reproducibility level (excellent/good/moderate/poor based on score)
-2. Highlights the most critical issues
-3. Gives the top 1-2 actionable recommendations
-
-Keep it factual and constructive."""
-
-        try:
-            llm = get_default_client()
-            return llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=300,
-            )
-        except Exception:
-            level = (
-                "excellent" if score >= 85
-                else "good" if score >= 70
-                else "moderate" if score >= 50
-                else "poor"
-            )
-            return (
-                f"Reproducibility level: {level} (score: {score}/100). "
-                f"Failed {len(failed_items)} checks. "
-                f"Priority: {suggestions[0] if suggestions else 'No specific issues.'}"
+                "Ensure the repository is public and git is installed."
             )

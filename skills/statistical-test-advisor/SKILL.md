@@ -1,98 +1,209 @@
 ---
 name: statistical-test-advisor
-description: Recommend the appropriate statistical test for a research design, provide assumption checklists, Python and R code, and optionally run the test on provided data. Use when a researcher needs to choose between t-test, ANOVA, Mann-Whitney, chi-square, correlation tests, etc. Especially useful for non-CS researchers (social science, medicine, psychology) who are less confident about statistics.
+description: Two-phase statistical analysis assistant for researchers. Phase 1 (selector): recommend the appropriate statistical test for a given research design using a decision tree, with a full assumptions checklist and Python/R code. Phase 2 (runner): execute the test on provided data and generate an interpreted result paragraph. Use for group comparisons, correlation analysis, or association testing — especially for non-CS researchers (social science, medicine, psychology, education) who are less confident about choosing statistical methods. Do NOT use when the user already knows which test to run (go straight to runner), when the study design is incompletely specified, or when the data violates all available tests (consult a statistician instead).
 ---
 
 # Statistical Test Advisor
 
-Recommends appropriate statistical tests based on research design using a decision tree, generates ready-to-run Python and R code, and optionally executes the test on actual data with a written interpretation.
+A two-phase tool: first **selects** the right test using a rule-based decision tree (no LLM, deterministic), then optionally **runs** the test on actual data and generates an interpreted result with actionable language.
+
+**This skill does not replace professional statistical consultation.** For high-stakes research (clinical trials, policy decisions), results should be reviewed by a qualified statistician.
+
+---
+
+## Phase 1 — Test Selector
+
+### Input Schema (Selector)
+
+```json
+{
+  "phase":                    "'select' (required for this phase)",
+  "research_question_type":   "'group_comparison' | 'correlation' | 'association'",
+  "num_groups":               "integer ≥ 2",
+  "variable_type":            "'continuous' | 'ordinal' | 'categorical' | 'binary'",
+  "paired":                   "boolean — true if same participants at multiple time points",
+  "sample_size":              "[integer, ...] — one per group",
+  "assume_normality":         "boolean | null — null means 'unknown, run normality test first'",
+  "research_context":         "string | null — describe your study briefly"
+}
+```
+
+**All fields except `research_context` are required for Phase 1.**
+
+### Decision Tree Summary
+
+```
+research_question_type
+├── group_comparison
+│   ├── 2 groups, continuous, independent
+│   │   ├── normal + large n → Student t-test
+│   │   ├── normal + unequal variance → Welch t-test
+│   │   └── non-normal OR n < 30 → Mann-Whitney U
+│   ├── 2 groups, continuous, paired
+│   │   ├── normal differences → Paired t-test
+│   │   └── non-normal → Wilcoxon signed-rank
+│   ├── 2 groups, binary, paired → McNemar's test
+│   ├── 3+ groups, continuous, independent
+│   │   ├── normal + equal var → One-way ANOVA
+│   │   └── non-normal → Kruskal-Wallis H
+│   ├── 3+ groups, continuous, repeated → Repeated measures ANOVA
+│   └── categorical → Chi-square (n≥5 per cell) or Fisher exact
+├── correlation
+│   ├── continuous, bivariate normal → Pearson r
+│   └── ordinal or non-normal → Spearman ρ
+└── association
+    ├── 2×2 table, small n → Fisher exact
+    └── larger table → Chi-square
+```
+
+### Output Schema (Selector)
+
+```json
+{
+  "phase": "select",
+  "primary_recommendation": {
+    "test_name":          "string",
+    "python_package":     "string",
+    "python_function":    "string",
+    "r_function":         "string",
+    "description":        "string",
+    "effect_size_measure":"string",
+    "why_chosen":         "string"
+  },
+  "alternatives": [
+    {
+      "test_name":   "string",
+      "when_to_use": "string"
+    }
+  ],
+  "assumptions_checklist": [
+    {
+      "assumption":    "string",
+      "how_to_verify": "string",
+      "status":        "'user_asserted' | 'not_verified' | 'violated' | 'checked_by_data'"
+    }
+  ],
+  "warnings": ["string — e.g. 'small sample size (n<30), consider non-parametric'"],
+  "python_code": "string — ready-to-run scipy/pingouin code",
+  "r_code":      "string — equivalent R code",
+  "next_step":   "string — guidance: 'run normality check first' OR 'proceed to phase=run'"
+}
+```
+
+---
+
+## Phase 2 — Test Runner
+
+### Input Schema (Runner)
+
+```json
+{
+  "phase":      "'run' (required for this phase)",
+  "test_name":  "string — from Phase 1 output or user-specified",
+  "data":       [[0.0, ...], [0.0, ...]] ,
+  "alpha":      "number — significance level, default 0.05",
+  "context":    "string | null — study description for interpretation"
+}
+```
+
+**`data` is required: a list of groups, each group is a list of numbers.**
+
+### Output Schema (Runner)
+
+```json
+{
+  "phase": "run",
+  "test_name":  "string",
+  "statistic":  0.0,
+  "p_value":    0.0,
+  "significant": true,
+  "alpha":      0.05,
+  "effect_size": {
+    "name":  "string",
+    "value": 0.0,
+    "interpretation": "negligible | small | medium | large"
+  },
+  "confidence_interval": [0.0, 0.0],
+  "interpretation": "string — LLM-generated plain-language paragraph",
+  "report_sentence": "string — ready to paste into paper Methods/Results section",
+  "warnings": ["string"]
+}
+```
+
+---
 
 ## When to Use
 
-- User needs to pick a statistical test for their study design
-- User wants to know whether to use a parametric or non-parametric test
-- User wants Python or R code for their analysis
-- User has actual data and wants to run the test and get an interpretation
+- Researcher is unsure which test to choose → use `phase=select`
+- Researcher has decided on a test and has data → use `phase=run` directly
+- Non-CS researcher needs guidance on normality, variance homogeneity, or sample size adequacy
+- User wants ready-to-run Python/R code for their analysis
 
-## Decision Tree Summary
+## When NOT to Use
 
-Before running the script, use these questions to gather information from the user:
-
-1. **What is your research question type?**
-   - `group_comparison` — comparing means/distributions across groups
-   - `correlation` — measuring linear/monotonic association between two variables
-   - `association` — testing independence between categorical variables
-
-2. **How many groups?** (2 groups vs. 3 or more)
-
-3. **What type is the outcome variable?**
-   - `continuous` — measured on a numeric scale (height, test score, reaction time)
-   - `ordinal` — ordered categories (Likert scale, rating 1-5)
-   - `categorical` — unordered categories (gender, disease type)
-   - `binary` — only two categories (yes/no, pass/fail)
-
-4. **Are the samples paired/matched?**
-   - Paired: same participants at two time points, or matched case-control pairs
-   - Independent: different participants in each group
-
-5. **How large are your samples?** (sample sizes per group)
-
-6. **Can normality be assumed?** (or: "Do you know if your data is normally distributed?")
+- **Design is incompletely specified**: "I have some data, what test should I use?" is not enough — you must gather `num_groups`, `variable_type`, `paired`, and `sample_size` first
+- **Multiple comparisons**: if the user has more than one hypothesis test (e.g. ANOVA followed by post-hoc), this skill handles only a single test at a time; explicitly state that multiple-comparison correction (Bonferroni, FDR) is required
+- **All assumptions violated**: if the data is too small for any parametric test AND non-parametric alternatives don't apply, state this clearly and advise consulting a statistician
+- **High-stakes clinical or regulatory context**: always add a disclaimer that professional statistical review is required
 
 ## Step-by-Step Instructions
 
-1. **Gather the design information** from the user using the questions above.
+### Phase 1: Select
 
-2. **Create input JSON** at `/tmp/stats_input.json`:
+1. **Gather design information** from the user:
+   - What are you comparing? (groups, correlation, or association?)
+   - How many groups?
+   - What type is the outcome variable?
+   - Is the design paired or independent?
+   - What are the sample sizes?
+   - Is normality known or assumed?
 
+2. **Create input JSON** at `/tmp/stats_select.json`.
+
+3. **Run**:
+   ```bash
+   python skills/statistical-test-advisor/run.py --input /tmp/stats_select.json
+   ```
+
+4. **Present**: test name + `why_chosen`, full `assumptions_checklist`, Python and R code.
+
+5. **Check `next_step`**:
+   - If `"run normality check first"` → show normality testing code from `docs/normality-testing.md` before proceeding
+   - If `"proceed to phase=run"` → ask user if they have data
+
+### Phase 2: Run
+
+1. **Ask the user to provide their data** as numeric arrays.
+
+2. **Create input JSON** at `/tmp/stats_run.json`:
    ```json
    {
-     "research_question_type": "group_comparison",
-     "num_groups": 2,
-     "variable_type": "continuous",
-     "paired": false,
-     "sample_size": [35, 32],
-     "assume_normality": null,
+     "phase": "run",
+     "test_name": "independent_t",
+     "data": [[85, 92, 78, ...], [71, 88, 65, ...]],
      "alpha": 0.05,
      "context": "Comparing exam scores between control and treatment groups"
    }
    ```
 
-   To also **run the test on actual data**, add:
-   ```json
-   "data": [[score1, score2, ...], [score1, score2, ...]]
-   ```
-
-3. **Run the advisor script**:
-
+3. **Run**:
    ```bash
-   python skills/statistical-test-advisor/run.py --input /tmp/stats_input.json
+   python skills/statistical-test-advisor/run.py --input /tmp/stats_run.json
    ```
 
-4. **Present the results** to the user:
-   - Name and brief description of the primary recommended test
-   - **Assumption checklist** — explain each assumption and how to verify it
-   - **Python code** — ready to copy and run
-   - **R code** — for users preferring R
-   - If test was run: the statistic, p-value, significance decision, and interpretation
+4. **Present**:
+   - Test statistic and p-value
+   - Significance decision at stated α
+   - Effect size with Cohen's guidelines interpretation
+   - `report_sentence` verbatim (paste-ready for paper)
 
-5. **If normality is uncertain** (`assume_normality: null`), suggest running Shapiro-Wilk first. See `docs/normality-testing.md`.
+5. **Always include `warnings`** if present — common ones: small n, borderline p-value, assumption not verified.
 
-## Common Test Recommendations by Design
+## Known Limitations
 
-| Design | Recommended Test |
-|--------|-----------------|
-| 2 groups, continuous, independent, normal | Independent t-test |
-| 2 groups, continuous, independent, non-normal or small n | Mann-Whitney U |
-| 2 groups, continuous, paired | Paired t-test |
-| 2 groups, continuous, paired, non-normal | Wilcoxon signed-rank |
-| 3+ groups, continuous, independent, normal | One-way ANOVA |
-| 3+ groups, continuous, independent, non-normal | Kruskal-Wallis H |
-| 3+ conditions, same participants | Repeated-measures ANOVA |
-| 2 categorical variables | Chi-square |
-| 2 categorical variables, small sample | Fisher's exact test |
-| Paired binary | McNemar's test |
-| 2 continuous variables, linear | Pearson correlation |
-| 2 continuous/ordinal variables, non-parametric | Spearman rank correlation |
+- Normality assumption defaults to `not_verified` unless the user explicitly asserts it or provides data for the normality check
+- Effect size computation is available for t-tests (Cohen's d), Mann-Whitney (rank-biserial r), ANOVA (η²), and correlations (r); not yet available for chi-square or Fisher exact
+- The `interpretation` field is LLM-generated and should be reviewed before inclusion in a manuscript
+- Does not handle nested, multilevel, or longitudinal designs
 
-For detailed guidance on normality testing and assumption verification, read `docs/normality-testing.md`.
+For normality testing guidance, see `docs/normality-testing.md`.
