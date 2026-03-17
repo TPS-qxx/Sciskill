@@ -29,6 +29,29 @@ class SkillResult:
             "metadata": self.metadata,
         }
 
+    def to_json(self, indent: int = 2) -> str:
+        """Serialize to a JSON string."""
+        import json
+        return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
+
+    def raise_on_error(self) -> "SkillResult":
+        """Raise RuntimeError if the result is a failure. Returns self for chaining."""
+        if not self.success:
+            raise RuntimeError(
+                f"Skill '{self.metadata.get('skill', '?')}' failed: "
+                + "; ".join(self.errors)
+            )
+        return self
+
+    def __repr__(self) -> str:
+        status = "ok" if self.success else "fail"
+        keys = list(self.data.keys())[:4]
+        extra = ", ..." if len(self.data) > 4 else ""
+        return (
+            f"SkillResult({status}, data={{{', '.join(repr(k) for k in keys)}{extra}}}, "
+            f"elapsed={self.metadata.get('elapsed_seconds', '?')}s)"
+        )
+
     @classmethod
     def ok(cls, data: dict, metadata: dict | None = None) -> "SkillResult":
         return cls(success=True, data=data, metadata=metadata or {})

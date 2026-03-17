@@ -2,77 +2,42 @@
 
 **AI Agent Skills for Academic Research**
 
+[![Tests](https://github.com/TPS-qxx/Sciskill/actions/workflows/test.yml/badge.svg)](https://github.com/TPS-qxx/Sciskill/actions/workflows/test.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Agent Skills](https://img.shields.io/badge/Anthropic-Agent%20Skills-blueviolet)](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview)
+
 SciSkills is an open-source collection of Agent Skills for graduate researchers. Each skill is a self-contained folder with a `SKILL.md` instruction file, executable scripts, and reference docs — following the [Anthropic Agent Skills open standard](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview).
-
----
-
-## What is an Agent Skill?
-
-An Agent Skill is a **folder containing `SKILL.md`** — a structured instruction file that tells an AI agent *when* to use the skill and *how* to execute it, step by step. Skills are:
-
-- **Lazily loaded**: the agent only reads the full `SKILL.md` when the task matches the skill's description
-- **Composable**: skills can call other skills (e.g. `research-gap-identifier` depends on output from `paper-structural-extractor`)
-- **Framework-agnostic**: work with Claude Code, Claude API, Claude App, and any framework supporting the open standard
 
 ---
 
 ## Skills
 
-| Skill folder | What it does | Requires LLM? |
-|---|---|---|
-| `paper-structural-extractor` | Extract structured JSON from a paper (arXiv / DOI / PDF) | Yes |
-| `bibtex-fixer-enricher` | Fix, normalize, and enrich BibTeX via Crossref API | No |
-| `experiment-result-comparator` | Rank experiments, generate LaTeX/Markdown tables, trade-off analysis | Optional |
-| `statistical-test-advisor` | Recommend + run statistical tests with Python/R code | Optional |
-| `research-gap-identifier` | Coverage matrix + unexplored research directions | Yes |
-| `reproducibility-checker` | Analyze a GitHub repo for reproducibility issues (score 0–100) | Optional |
+| Skill | What it does | Requires LLM? |
+|-------|-------------|:---:|
+| [`paper-structural-extractor`](skills/paper-structural-extractor/) | Extract structured JSON from a paper (arXiv / DOI / PDF) | Yes |
+| [`bibtex-fixer-enricher`](skills/bibtex-fixer-enricher/) | Fix, normalize, and enrich BibTeX via Crossref API | No |
+| [`experiment-result-comparator`](skills/experiment-result-comparator/) | Rank experiments, generate LaTeX/Markdown tables, trade-off analysis | Optional |
+| [`statistical-test-advisor`](skills/statistical-test-advisor/) | Recommend + run statistical tests with Python/R code | Optional |
+| [`research-gap-identifier`](skills/research-gap-identifier/) | Coverage matrix + unexplored research directions | Yes |
+| [`reproducibility-checker`](skills/reproducibility-checker/) | Analyze a GitHub repo for reproducibility issues (score 0–100) | Optional |
 
-**Dependency graph:**
-```
-Layer 1 — foundational:   paper-structural-extractor · bibtex-fixer-enricher · reproducibility-checker
-Layer 2 — standalone:     experiment-result-comparator · statistical-test-advisor
-Layer 3 — composite:      research-gap-identifier  (uses output of paper-structural-extractor)
-```
+### Dependency graph
 
----
+```mermaid
+graph BT
+    A[paper-structural-extractor]  --> E[research-gap-identifier]
+    B[bibtex-fixer-enricher]
+    C[reproducibility-checker]
+    D1[experiment-result-comparator]
+    D2[statistical-test-advisor]
 
-## Project Structure
-
-```
-sciskills/
-├── skills/                          ← Agent Skills (official standard)
-│   ├── paper-structural-extractor/
-│   │   ├── SKILL.md                 ← Instructions for the agent
-│   │   └── run.py                   ← Executable script called from SKILL.md
-│   ├── bibtex-fixer-enricher/
-│   │   ├── SKILL.md
-│   │   ├── run.py
-│   │   └── docs/issue-types.md      ← Reference loaded on demand
-│   ├── experiment-result-comparator/
-│   │   ├── SKILL.md
-│   │   ├── run.py
-│   │   └── docs/ablation-tables.md
-│   ├── statistical-test-advisor/
-│   │   ├── SKILL.md
-│   │   ├── run.py
-│   │   └── docs/normality-testing.md
-│   ├── research-gap-identifier/
-│   │   ├── SKILL.md
-│   │   ├── run.py
-│   │   └── merge_papers.py
-│   └── reproducibility-checker/
-│       ├── SKILL.md
-│       ├── run.py
-│       └── docs/checks-reference.md
-│
-├── sciskills/                       ← Python execution library (used by run.py scripts)
-│   ├── core/                        ← BaseSkill, SkillResult, registry
-│   ├── skills/                      ← Python skill implementations
-│   └── utils/                       ← LLM client, API clients, LaTeX templates
-│
-├── tests/                           ← 57 passing unit tests
-├── examples/                        ← standalone / LangChain / Claude usage
-└── pyproject.toml
+    style E  fill:#7c3aed,color:#fff
+    style A  fill:#3b82f6,color:#fff
+    style B  fill:#3b82f6,color:#fff
+    style C  fill:#3b82f6,color:#fff
+    style D1 fill:#14b8a6,color:#fff
+    style D2 fill:#14b8a6,color:#fff
 ```
 
 ---
@@ -82,41 +47,49 @@ sciskills/
 ### 1. Install
 
 ```bash
-git clone https://github.com/sciskills/sciskills
-cd sciskills
+git clone https://github.com/TPS-qxx/Sciskill.git
+cd Sciskill
 pip install -e ".[all]"
 ```
 
-### 2. Configure LLM
+### 2. Zero-config demo (no API key needed)
+
+`bibtex-fixer-enricher` is purely rule-based — try it immediately:
+
+```bash
+python skills/bibtex-fixer-enricher/run.py --bib examples/sample_broken.bib
+```
+
+Expected output: a JSON report listing detected issues (missing fields, inconsistent author names, duplicate entries) and the cleaned BibTeX.
+
+### 3. Configure LLM (required for Skills 1, 3, 4, 5)
 
 ```bash
 cp .env.example .env
-# Edit .env and fill in your LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+# Edit .env and set LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 ```
 
 Or export directly:
+
 ```bash
 export LLM_API_KEY=your_key
-export LLM_BASE_URL=https://ep-llm.zhenguanyu.com/gateway-cn-online/openai-compatible/v1
-export LLM_MODEL=doubao-seed-1.8
+export LLM_BASE_URL=https://api.openai.com/v1
+export LLM_MODEL=gpt-4o
 ```
 
-### 3. Use with Claude Code (Agent Skills standard)
+<details>
+<summary>Tested LLM providers</summary>
 
-Place the `skills/` directory in your project or global `~/.claude/skills/`:
+| Provider | Example model | Notes |
+|----------|--------------|-------|
+| OpenAI | `gpt-4o` | Recommended for best extraction quality |
+| Anthropic | `claude-opus-4-6` | Via OpenAI-compatible proxy |
+| Doubao | `doubao-seed-1.8` | 国内推荐，速度快 |
+| Any OpenAI-compatible endpoint | — | Set `LLM_BASE_URL` accordingly |
 
-```bash
-# Project-level (recommended):
-mkdir -p .claude/skills
-cp -r skills/* .claude/skills/
+</details>
 
-# Or global:
-cp -r skills/* ~/.claude/skills/
-```
-
-Claude will automatically discover the skills and use them when relevant.
-
-### 4. Use the scripts directly
+### 4. Use the CLI scripts
 
 ```bash
 # Extract paper structure from arXiv
@@ -131,57 +104,133 @@ python skills/experiment-result-comparator/run.py --input experiments.json
 # Get statistical test recommendation
 python skills/statistical-test-advisor/run.py --input study_design.json
 
+# Identify research gaps from a paper collection
+python skills/research-gap-identifier/run.py --input papers.json --topic "NER"
+
 # Check a repo's reproducibility
 python skills/reproducibility-checker/run.py --repo https://github.com/owner/repo
 ```
 
+### 5. Unified CLI
+
+```bash
+sciskills run paper-structural-extractor --arxiv 1706.03762
+sciskills run bibtex-fixer-enricher --bib refs.bib
+sciskills list
+```
+
 ---
 
-## Using the Python API Directly
+## Use with Claude Code (Agent Skills standard)
 
-For programmatic use in your own code or agent framework:
+Copy the `skills/` directory into your project:
+
+```bash
+# Project-level (recommended):
+cp -r skills/* .claude/skills/
+
+# Or global:
+cp -r skills/* ~/.claude/skills/
+```
+
+Claude will automatically discover and use the skills when relevant to the conversation.
+
+---
+
+## What is an Agent Skill?
+
+An Agent Skill is a **folder containing `SKILL.md`** — a structured instruction file that tells an AI agent *when* to use the skill and *how* to execute it, step by step. Skills are:
+
+- **Lazily loaded**: the agent reads `SKILL.md` only when the task matches the skill's description
+- **Composable**: skills can depend on each other (`research-gap-identifier` uses `paper-structural-extractor` output)
+- **Framework-agnostic**: work with Claude Code, Claude API, Claude App, and any framework supporting the open standard
+
+---
+
+## Project Structure
+
+```
+Sciskill/
+├── skills/                              ← Agent Skills (official standard)
+│   ├── paper-structural-extractor/
+│   │   ├── SKILL.md                     ← Agent instructions + frontmatter
+│   │   └── run.py                       ← Script invoked by the agent
+│   ├── bibtex-fixer-enricher/
+│   │   ├── SKILL.md
+│   │   ├── run.py
+│   │   └── docs/issue-types.md          ← Reference, loaded on demand
+│   └── ... (4 more skills)
+│
+├── sciskills/                           ← Python execution library
+│   ├── core/                            ← BaseSkill, SkillResult, registry
+│   ├── skills/                          ← Python skill implementations
+│   └── utils/                           ← LLM client, API clients, LaTeX templates
+│
+├── examples/
+│   ├── sample_broken.bib                ← Zero-dependency demo input
+│   ├── standalone_usage.py
+│   ├── use_with_claude.py
+│   └── use_with_langchain.py
+├── tests/                               ← 57 passing unit tests
+└── pyproject.toml
+```
+
+---
+
+## Python API
+
+All skills share the same interface:
 
 ```python
 import sciskills
 from sciskills import registry
 
-# Skill 1: Extract paper
-skill = registry.get("paper_structural_extractor")
-result = skill({"arxiv_id": "1706.03762"})
-print(result.data["paper"]["research_question"])
+result = registry.get("paper_structural_extractor")({"arxiv_id": "1706.03762"})
 
-# Skill 3: Compare experiments and get LaTeX table
+result.success          # True / False
+result.data             # structured output dict
+result.errors           # list[str], non-empty only on failure
+result.metadata         # elapsed_seconds, skill name, etc.
+
+result.raise_on_error() # raises RuntimeError if not success (chainable)
+```
+
+### Experiment comparison → LaTeX table
+
+```python
 skill = registry.get("experiment_result_comparator")
 result = skill({
     "experiments": [
-        {"name": "BERT",      "metrics": {"F1": 88.5, "Latency_ms": 120}},
-        {"name": "RoBERTa",   "metrics": {"F1": 91.2, "Latency_ms": 280}},
-        {"name": "DistilBERT","metrics": {"F1": 85.3, "Latency_ms":  65}},
+        {"name": "BERT",       "metrics": {"F1": 88.5, "Latency_ms": 120}},
+        {"name": "RoBERTa",    "metrics": {"F1": 91.2, "Latency_ms": 280}},
+        {"name": "DistilBERT", "metrics": {"F1": 85.3, "Latency_ms":  65}},
     ],
     "primary_metric": "F1",
     "higher_is_better": {"F1": True, "Latency_ms": False},
     "output_format": "all",
 })
-print(result.data["latex_table"])
+print(result.data["latex_table"])   # paste into your paper
+```
 
-# Skill 4: Run a statistical test
+### Statistical test recommendation + execution
+
+```python
 skill = registry.get("statistical_test_advisor")
 result = skill({
     "research_question_type": "group_comparison",
-    "num_groups": 2,
-    "variable_type": "continuous",
-    "paired": False,
-    "data": [control_group_scores, treatment_group_scores],
+    "num_groups": 2, "variable_type": "continuous", "paired": False,
+    "data": [control_scores, treatment_scores],
 })
-print(result.data["test_results"])    # p-value, statistic, significant
-print(result.data["python_code"])     # ready-to-run code
+print(result.data["primary_recommendation"]["test_name"])
+print(result.data["test_results"])   # {"statistic": ..., "p_value": ..., "significant": ...}
+print(result.data["python_code"])    # ready-to-run scipy code
 ```
 
 ---
 
 ## Agent Framework Integration
 
-### Claude Tool Use (Anthropic API)
+### Claude Tool Use
 
 ```python
 from sciskills.core.adapters import SciSkillClaudeTool
@@ -190,7 +239,6 @@ import anthropic
 
 adapter = SciSkillClaudeTool(registry.get("paper_structural_extractor"))
 client  = anthropic.Anthropic()
-
 response = client.messages.create(
     model="claude-opus-4-6",
     tools=[adapter.tool_definition()],
@@ -211,51 +259,35 @@ lc_tool = SciSkillLangChainTool(registry.get("bibtex_fixer_enricher")).as_langch
 
 ```python
 from sciskills import registry
-tools = registry.to_openai_tools()  # plug into any OpenAI-compatible framework
+tools = registry.to_openai_tools()
 ```
-
----
-
-## Architecture: Two Layers
-
-SciSkills has a **dual-layer architecture**:
-
-| Layer | Location | Purpose |
-|-------|----------|---------|
-| **Skill folders** (`skills/`) | Agent Skills standard | `SKILL.md` instructions + CLI scripts. What the agent reads and invokes. |
-| **Python library** (`sciskills/`) | Internal execution engine | `BaseSkill`, `SkillResult`, implementations. What the scripts run. |
-
-This means you can use SciSkills in three ways:
-1. **Agent Skills** — drop the `skills/` folder into `.claude/skills/` and let Claude use them autonomously
-2. **CLI scripts** — call `run.py` directly from the command line or shell scripts
-3. **Python API** — import and call from your own code or agent framework
 
 ---
 
 ## Development
 
 ```bash
-git clone https://github.com/sciskills/sciskills
-cd sciskills
+git clone https://github.com/TPS-qxx/Sciskill.git
+cd Sciskill
 pip install -e ".[dev,pdf,bibtex,stats]"
-pytest  # 57 tests
+pytest
 ```
 
 ### Roadmap
 
 - **v0.1** ✓ — Core framework + all 6 skills + official Skill folders
-- **v0.2** — Async execution, streaming, skill composition helpers
+- **v0.2** — Async execution, skill composition helpers, PyPI release
 - **v0.3** — Skill versioning, dependency declarations, evaluation harness
-- **v1.0** — Stable API, full docs site, PyPI release
+- **v1.0** — Stable API, full docs site
 
 ---
 
 ## Contributing
 
-Contributions welcome. Please open an issue before a large PR. See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). Contributions welcome — please open an issue before a large PR.
 
 ---
 
 ## License
 
-MIT © SciSkills Contributors
+MIT © SciSkills Contributors — see [LICENSE](LICENSE)

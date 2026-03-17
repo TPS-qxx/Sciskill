@@ -1,0 +1,63 @@
+% sample_broken.bib — intentionally broken BibTeX for demo purposes
+% Run: python skills/bibtex-fixer-enricher/run.py --bib examples/sample_broken.bib
+
+% Issue 1: article missing required 'journal' field
+@article{vaswani2017attention,
+  title = {Attention Is All You Need},
+  author = {Ashish Vaswani and Noam Shazeer and Niki Parmar and Jakob Uszkoreit},
+  year = {2017},
+  doi = {10.48550/arXiv.1706.03762}
+}
+
+% Issue 2: inconsistent author name format (mix of "First Last" and "Last, First")
+@inproceedings{devlin2019bert,
+  title = {{BERT}: Pre-training of Deep Bidirectional Transformers for Language Understanding},
+  author = {Jacob Devlin and Chang, Ming-Wei and Kenton Lee and Toutanova, Kristina},
+  booktitle = {Proceedings of NAACL-HLT},
+  year = {2019},
+  pages = {4171--4186}
+}
+
+% Issue 3: all-caps author name (common OCR artifact)
+@article{lecun1989,
+  title = {Backpropagation Applied to Handwritten Zip Code Recognition},
+  author = {LECUN, YANN and BOSER, BERNHARD and DENKER, JOHN S.},
+  journal = {Neural Computation},
+  volume = {1},
+  number = {4},
+  pages = {541--551},
+  year = {1989}
+}
+
+% Issue 4: invalid year format
+@article{brown2020gpt3,
+  title = {Language Models are Few-Shot Learners},
+  author = {Brown, Tom B. and Mann, Ben and Ryder, Nick},
+  journal = {NeurIPS},
+  year = {20xx},
+  doi = {10.48550/arXiv.2005.14165}
+}
+
+% Issue 5: URL stored in 'note' instead of 'url' field
+@misc{openai2023gpt4,
+  title = {{GPT}-4 Technical Report},
+  author = {OpenAI},
+  year = {2023},
+  note = {Available at https://openai.com/research/gpt-4}
+}
+
+% Issue 6: duplicate of devlin2019bert (same title)
+@inproceedings{devlin_bert_duplicate,
+  title = {{BERT}: Pre-training of Deep Bidirectional Transformers for Language Understanding},
+  author = {Devlin, Jacob and Chang, Ming-Wei},
+  booktitle = {NAACL},
+  year = {2019}
+}
+
+% Issue 7: title with unbraced acronyms (BibTeX may downcase them)
+@article{radford2019gpt2,
+  title = {Language Models are Unsupervised Multitask Learners},
+  author = {Radford, Alec and Wu, Jeffrey and Child, Rewon},
+  journal = {OpenAI Blog},
+  year = {2019}
+}

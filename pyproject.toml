@@ -40,7 +40,7 @@ langchain = ["langchain>=0.2", "pydantic>=2.0"]
 anthropic = ["anthropic>=0.30"]
 all = [
     "pymupdf>=1.24",
-    "bibtexparser>=2.0",
+    "bibtexparser>=1.4,<2.0",
     "scipy>=1.12",
     "pingouin>=0.5",
     "langchain>=0.2",
@@ -57,11 +57,14 @@ dev = [
     "numpy>=1.26",
 ]
 
+[project.scripts]
+sciskills = "sciskills.cli:main"
+
 [project.urls]
-Homepage = "https://github.com/sciskills/sciskills"
-Documentation = "https://sciskills.readthedocs.io"
-Repository = "https://github.com/sciskills/sciskills"
-Issues = "https://github.com/sciskills/sciskills/issues"
+Homepage = "https://github.com/TPS-qxx/Sciskill"
+Documentation = "https://github.com/TPS-qxx/Sciskill#readme"
+Repository = "https://github.com/TPS-qxx/Sciskill"
+Issues = "https://github.com/TPS-qxx/Sciskill/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
